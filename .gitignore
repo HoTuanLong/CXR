@@ -1,0 +1,12 @@
+/ckps
+/logs
+/models
+/outputs
+/wandb
+/__pycache__
+server_log.txt
+nohup.out
+client_log_1.txt
+client_log_2.txt
+chexpert_name.txt
+*.txt
