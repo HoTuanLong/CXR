@@ -185,7 +185,7 @@ class complete_model(pl.LightningModule):
 
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.hparams.learning_rate,
                                                         # num_samples/batchsize = 61755/32
-                                                        total_steps=(int(100000 / 8) + 1) * self.hparams.expected_num_epochs + 1,
+                                                        total_steps=(int(70000 / 16) + 1) * self.hparams.expected_num_epochs + 1,
                                                         epochs=None,
                                                         # overall 61755 images / batchsize 32 = 2165 = number of steps in the scheduler
                                                         steps_per_epoch=None,

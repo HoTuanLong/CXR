@@ -622,7 +622,7 @@ def train_FL():
                              expected_num_epochs=expected_num_epochs, weight_decay=weight_decay,
                              validation_path_many=csv_val, root=image_root, validation_path_singles=csv_val_singles,
                              num_workers=num_workers)
-    # model50.model.load_state_dict(torch.load(model_load_path))
+    # model50.model.load_state_dict(torch.load('/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/server_checkpoint.pth'))
 
     trainer50 = pl.Trainer(
         weights_summary=None,
