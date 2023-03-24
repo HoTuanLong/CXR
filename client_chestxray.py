@@ -82,36 +82,6 @@ class model_head(nn.Module):
 
 # wrapper for all network parts, takes in extractor, head and the loss function, here, PyTorch lightning was used as a
 # framework
-# our model head, used after extractor, here pooling and embedding size is defined
-class model_head(nn.Module):
-    def __init__(self, channel_size_in, embedding_size, pooling_size=1, channel_size_pre_flat=100):
-        super(model_head, self).__init__()
-        self.pooling = layers.AdaptiveConcatPool2d(pooling_size)
-        self.bottle_neck_conv = nn.Conv2d(channel_size_in, channel_size_pre_flat, kernel_size=1, stride=1, bias=False)
-        num_input_features = channel_size_pre_flat * (pooling_size ** 2) * 2
-        bn1 = nn.BatchNorm1d(num_input_features)
-        bn2 = nn.BatchNorm1d(2048)
-        self.first_fc = nn.Sequential(nn.Flatten(),
-                                      bn1,
-                                      nn.Dropout(0.5),
-                                      nn.Linear(num_input_features, 2048),
-                                      nn.ReLU(True))
-        self.second_fc = nn.Sequential(
-            bn2,
-            nn.Dropout(0.25),
-            nn.Linear(2048, embedding_size))
-
-    def forward(self, x):
-        x = self.pooling(x)
-        bs, chs, height, width = x.shape
-        x = x.view((bs, int(chs / 2), height * 2, width))
-        x = self.bottle_neck_conv(x)
-        x = self.first_fc(x)
-        return self.second_fc(x)
-
-
-# wrapper for all network parts, takes in extractor, head and the loss function, here, PyTorch lightning was used as a
-# framework
 class complete_model(pl.LightningModule):
     def __init__(self,
                  extractor,
@@ -120,14 +90,13 @@ class complete_model(pl.LightningModule):
                  validation_path_many,
                  validation_path_singles,
                  root,
-                 results = {},
-                 best_score = 0,
-                 frozen_at_start=False,  # -> whether Extractor is frozen or not
+                 best_score=0,
+                 frozen_at_start=False,   # -> whether Extractor is frozen or not
                  learning_rate=1e-5,
                  batch_size=32,
                  expected_num_epochs=1,
                  weight_decay=1e-5,
-                 num_workers=0):
+                 num_workers=0, ):
 
         super().__init__()
         self.save_hyperparameters('frozen_at_start', 'learning_rate', 'batch_size', 'expected_num_epochs',
@@ -138,7 +107,7 @@ class complete_model(pl.LightningModule):
         self.accuracy_calculator = AccuracyCalculator(include=("mean_average_precision_at_r", "precision_at_1",
                                                                "r_precision"), avg_of_avgs=False)
         self.loss_func = loss_func
-        self.results = results
+
         # used for val logging
         self.test_set_val = eval_Dataset(root, validation_path_many, validation_path_singles)
 
@@ -178,14 +147,14 @@ class complete_model(pl.LightningModule):
         optimizer = torch.optim.SGD(params_to_train, lr=self.hparams.learning_rate, momentum=0.9,
                                     weight_decay=self.hparams.weight_decay)
 
-        """
+        """ 
         This part is rather important, because you have to change the number of total steps when training, because the 
         learning rate depends on it when using OneCycleLR. Generally something like num_samples / batchsize
         """
 
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.hparams.learning_rate,
                                                         # num_samples/batchsize = 61755/32
-                                                        total_steps=(int(70000 / 16) + 1) * self.hparams.expected_num_epochs + 1,
+                                                        total_steps=(int(61755 / 16) + 1) * self.hparams.expected_num_epochs + 1,
                                                         epochs=None,
                                                         # overall 61755 images / batchsize 32 = 2165 = number of steps in the scheduler
                                                         steps_per_epoch=None,
@@ -197,47 +166,58 @@ class complete_model(pl.LightningModule):
         scheduler = {"scheduler": scheduler,
                      "interval": "step",
                      "frequency": 1}
-
+        
         return [optimizer], [scheduler]
-    
-        # The Helper function to compute the embeddings from the while training set
-    def get_all_embeddings(self, dataset, model):
-        tester = testers.BaseTester(dataloader_num_workers=self.hparams.num_workers)
-        return tester.get_all_embeddings(dataset, model)
 
     # define diff process steps during training validation and testing, describing the data flow and logging
     def training_step(self, batch, batch_idx):
+        
         inputs, labels = batch
         embeddings = self(inputs)
         loss = self.loss_func(embeddings, labels)
         mean_distance = torch.mean(self.distance.compute_mat(embeddings.type(torch.float), None))
         max_distance = torch.max(self.distance.compute_mat(embeddings.type(torch.float), None))
-        metrics = {'train_loss': loss.item()}
+        metrics = {'train_loss': loss,
+                   'mean_distance': mean_distance,
+                   'max_distance': max_distance}
         self.log_dict(metrics)
-        self.results.update(metrics)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        # metrics = self.test_various_metrics(self.test_set_val)
         inputs, labels = batch
         embeddings = self(inputs)
         loss = self.loss_func(embeddings, labels)
-        self.results.update({'val_loss': loss.item()})
-
-        # metrics = {"val_loss": loss}
-        # self.log_dict(metrics)
-        # self.results.update(metrics)
+        metrics = {'val_loss': loss}
+        self.log_dict(metrics)
         return loss
 
     def validation_epoch_end(self, outs):
+        # outs is not needed here, this part could be rather easily optimized so the embedding space doesn't have to be
+        # computed twice
+        loss = torch.stack(outs).mean()
+        print("average_val_loss: " + str(loss))
+        wandb.log({"Validation Loss": loss.item()}, step=self.epoch_idx)
         self.test_various_metrics(self.test_set_val)
 
+    def test_step(self, batch, batch_idx):
+        inputs, labels = batch
+        embeddings = self(inputs)
+        loss = self.loss_func(embeddings, labels)
+        self.log('test_loss', loss)
+
+    # The Helper function to compute the embeddings from the while training set
+    def get_all_embeddings(self, dataset, model):
+        tester = testers.BaseTester(dataloader_num_workers=self.hparams.num_workers)
+        return tester.get_all_embeddings(dataset, model)
+
+    # the actual testing algorithm, done every epoch, but can also be called outside of training with any given test set
+    # as a parameter
     def test_various_metrics(self, testset, save_path=None):
         t0 = time.time()
         device = torch.device("cuda")
         self.model = self.model.to(device)
         embeddings, labels = self.get_all_embeddings(testset, self.model)
-        # loss = self.loss_func(embeddings, labels)
+
         print("Computing accuracy")
         accuracies = self.accuracy_calculator.get_accuracy(embeddings, embeddings, np.squeeze(labels),
                                                            np.squeeze(labels), True)
@@ -247,26 +227,33 @@ class complete_model(pl.LightningModule):
         print("mean_distance = " + str(mean_distance))
         print("max_distance = " + str(max_distance))
         print("Test set accuracy (MAP@R) = {}".format(accuracies["mean_average_precision_at_r"]))
-        print("r_prec = " + str(accuracies["r_precision"]))
-        print("prec_at_1 = " + str(accuracies["precision_at_1"]))
+        print("r_prec = "+ str(accuracies["r_precision"]))
+        print("prec_at_1 = "+ str(accuracies["precision_at_1"]))
         t1 = time.time()
         print("Time used for evaluating: " + str((t1 - t0) / 60) + " minutes")
 
-        metrics = {"validation_MAP@R_test": accuracies["mean_average_precision_at_r"],
-                   "validation_r_precision": accuracies["r_precision"],
-                   "validation_precision_at_1": accuracies["precision_at_1"],
-                   "mean__val_distance": mean_distance.item(),
-                   "max_val_distance": max_distance.item()
+        metrics = {"MAP@R_test": accuracies["mean_average_precision_at_r"],
+                   "r_precision": accuracies["r_precision"],
+                   "precision_at_1": accuracies["precision_at_1"],
+                   "mean__val_distance": mean_distance,
+                   "max_val_distance": max_distance
                    }
+
+        if save_path:
+            with open(save_path, 'a+') as f:
+                f.write('MAP@R: %s\n' % accuracies["mean_average_precision_at_r"])
+                f.write('mean_distance: %s\n' % str(mean_distance))
+                f.write('max_distance: %s\n' % str(max_distance))
+                f.write('MAP@R: %s\n' % accuracies["mean_average_precision_at_r"])
+                f.write('R-Precision: %s\n' % str(accuracies["r_precision"]))
+                f.write('Precision@1: %s\n' % accuracies["precision_at_1"])
         if accuracies["precision_at_1"] > self.best_score:
             self.best_score = accuracies["precision_at_1"]
-            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/chestxray_checkpoint_client.pth')
-        
+            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/chestxray_checkpoint_p2.pth')
+
         self.log_dict(metrics)
+        wandb.log(metrics, step=self.epoch_idx)
         self.epoch_idx += 1
-        self.results.update(metrics)
-        wandb.log(metrics)
-        # return metrics
 
 # a simple function that takes in id and name list, and takes out the necessary amount of samples
 def sample_func(current_id, num_samples, name_array, id_array):
@@ -281,68 +268,85 @@ def sample_func(current_id, num_samples, name_array, id_array):
 
 # forms blocks of size bucket_size, returns a boolean containing whether the operation was successful as well as the
 # block and updated id and name list
-def get_block(bucket_size, name_array, id_array):
+def get_block(block_size, name_array, id_array):
     operation_successful = True
     block = []
+    # At the start, a random patient with multiple images is selected
     current_id = np.random.choice(id_array)
     ids, counts = np.unique(id_array, return_counts=True)
     current_count = counts[np.argwhere(ids == current_id)]
 
-    # case of exactly 8 samples
-    if current_count % bucket_size == 0:
-        samples, name_array, id_array = sample_func(current_id, bucket_size, name_array, id_array)
+    # In the case that the amount of images exactly matches the block_size or is a multiple of it, block_size images are
+    # used for the block and directly returned.
+    if current_count % block_size == 0:
+        samples, name_array, id_array = sample_func(current_id, block_size, name_array, id_array)
         for sample in samples:
             block.append((sample, current_id))
         return operation_successful, block, name_array, id_array
 
-    # more than 8 images with this id
-    if current_count > bucket_size:
-        # check wether its 9 or mod8 == 1
+    # If there are more than block_size images with this id, different cases are considered. If the amount of images is
+    # exactly one bigger than the block size, a pair of two images is collected from this class. When there are at least
+    # block_size + 2 images, there is a 5050 chance whether we simply collect block_size images or another amount. This
+    # other amount is normally current_count % block_size, so the rest that would remain after using the modulo
+    # operation, with block_size as the basis on the amount of images we have of the patient. The only special case we
+    # have here is the case where the resulting number would be block_size - 1, meaning that there would be exactly one
+    # spot in the block left, automatically leading to a singleton. Therefore, we sample block_size - 2 samples in this
+    # case.
+    if current_count > block_size:
+        # check whether its 9 or mod8 == 1
         if current_count % 8 == 1:
             samples, name_array, id_array = sample_func(current_id, 2, name_array, id_array)
             for sample in samples:
                 block.append((sample, current_id))
-        # 50/50 whether we fill the block with 8 or num%8
+        # 50/50 whether we fill the block with block_size or current_count % block_size
         else:
             if random.random() < 0.5:
-                # fill with 8
-                samples, name_array, id_array = sample_func(current_id, bucket_size, name_array, id_array)
+                # fill with the block_size
+                samples, name_array, id_array = sample_func(current_id, block_size, name_array, id_array)
                 for sample in samples:
                     block.append((sample, current_id))
                 return operation_successful, block, name_array, id_array
             else:
-                # case 7, or more generally if there is not enough space for another pair we only take bucket_size - 3
-                if current_count % bucket_size == bucket_size - 1:
-                    samples, name_array, id_array = sample_func(current_id, current_count % bucket_size - 2, name_array,
+                # In case block_size - 1, there is not enough space for another pair, and we only take block_size - 2
+                if current_count % block_size == block_size - 1:
+                    samples, name_array, id_array = sample_func(current_id, current_count % block_size - 2, name_array,
                                                                 id_array)
                     for sample in samples:
                         block.append((sample, current_id))
-                        # all other cases
+                # all the other cases
                 else:
-                    samples, name_array, id_array = sample_func(current_id, current_count % bucket_size, name_array,
+                    samples, name_array, id_array = sample_func(current_id, current_count % block_size, name_array,
                                                                 id_array)
                     for sample in samples:
                         block.append((sample, current_id))
     else:
-        samples, name_array, id_array = sample_func(current_id, current_count % bucket_size, name_array, id_array)
+        samples, name_array, id_array = sample_func(current_id, current_count % block_size, name_array, id_array)
         for sample in samples:
             block.append((sample, current_id))
-    rest = bucket_size - len(block)
+
+    # This part of the function describes the routine if the first sampling step was not enough to reach an amount of
+    # block_size images. From here on, a loop is used to iteratively fill up the remaining space in the block. In the
+    # first step, all patients whose mod rest is larger than one and those that would either completely fill the
+    # remaining block or would leave a remaining block size that is bigger than 1 are considered. If there are none
+    # left, we try to fill up the block with a patient that has a mod rest of size block_size - 1. If that is not
+    # possible as well, the loop ends and the unfinished block is returned with the operation_successful flag set to
+    # false.
+    rest = block_size - len(block)
 
     while rest != 0:
         ids, counts = np.unique(id_array, return_counts=True)
-        shortened_counts = np.mod(counts, bucket_size)
-        # filter possible ids, so   1 < num_ids and rest - num_ids < 2
+        shortened_counts = np.mod(counts, block_size)
+        # filter possible ids, so 1 < num_ids and rest - num_ids < 2
         possible_ids = ids[
             (shortened_counts > 1) & (((rest - shortened_counts) > 1) | ((rest - shortened_counts) == 0))]
 
         # no combinations available
         if possible_ids.size == 0:
-            possible_ids = ids[shortened_counts == bucket_size - 1]
-            # not even when splitting up 7s building Block failed
+            possible_ids = ids[shortened_counts == block_size - 1]
+            # not even when splitting up block_size - 1 block
             if possible_ids.size == 0:
                 operation_successful = False
-            # fill up with parts of a seven --> operation successful
+            # fill up with a block_size - 1 block --> operation successful
             else:
                 current_id = np.random.choice(possible_ids)
                 samples, name_array, id_array = sample_func(current_id, rest, name_array, id_array)
@@ -356,8 +360,8 @@ def get_block(bucket_size, name_array, id_array):
                                                         id_array)
             for sample in samples:
                 block.append((sample, current_id))
-            rest = bucket_size - len(block)
-        # the loop ended, so we reached blocksize 0 and were successful
+            rest = block_size - len(block)
+    # the loop ended, so we reached block_size 0 and were successful
     return operation_successful, block, name_array, id_array
 
 
@@ -365,11 +369,7 @@ def get_block(bucket_size, name_array, id_array):
 # revamped without much of a problem
 def build_mining_list_32(name_array, id_array, block_size):
     mining_list = []
-    next_eight = []
     garbage_collector = []
-    list_counter = 0
-    row_order = [0, 4, 2, 6, 1, 5, 3, 7]
-
     while name_array.size != 0:
         operation_successful, block, name_array, id_array = get_block(block_size, name_array, id_array)
 
@@ -377,19 +377,8 @@ def build_mining_list_32(name_array, id_array, block_size):
             for part in block:
                 garbage_collector.append(part)
         else:
-            next_eight.append(block)
-            list_counter += 1
-            if len(next_eight) == 4:
-                for x in row_order:
-                    for y in range(len(next_eight)):
-                        mining_list.append(next_eight[y][x])
-                list_counter = 0
-                next_eight = []
-
-    if next_eight:
-        for eight in next_eight:
-            for one in eight:
-                mining_list.append(one)
+            for image_name in block:
+                mining_list.append(image_name)
 
     if garbage_collector:
         for garbage in garbage_collector:
@@ -547,6 +536,7 @@ def train_FL():
     args = parser.parse_args()
     print('Arguments:\n' + '--config_path: ' + args.config_path + '\n--config: ' + args.config)
 
+
     # read config
     with open(args.config_path + args.config, 'r') as config:
         config = config.read()
@@ -665,17 +655,16 @@ class FlowerClient(fl.client.NumPyClient):
         t1 = time.time()
         trainer50.fit(model50, data_module)
         t2 = time.time()
-        print("results: {}".format(model50.results))
         print("Time used for fitting the model: " + str((t2-t1)/3600) + " hours")
         # torch.save(model50.model.state_dict(), model_save_path)
-        return self.get_parameters(config={}), 55000, model50.results
+        return self.get_parameters(config={}), 55000, {}
 
 def main() -> None:
     # Model and data
     # model = mnist.LitAutoEncoder()
     # train_loader, val_loader, test_loader = mnist.load_data()
     wandb.login()
-    wandb.init(project="CXR-Patient-Client", entity="longht", name="ChestXray")
+    wandb.init(project="CXR-FL", entity="longht", name="ChestXray-client")
     # Flower client
     client = FlowerClient()
     fl.client.start_numpy_client(server_address="127.0.0.1:8080", client=client)

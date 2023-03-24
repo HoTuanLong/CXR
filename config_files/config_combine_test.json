@@ -1,6 +1,6 @@
 {
 	"experiment_description": "retrieval_approach",
-	"image_root" : "/home/ubuntu/shared/",
+	
 	"image_root_covid" : "/home/ubuntu/long.ht/covid-chestxray-dataset/images",
 	"image_root_chexpert" : "/home/ubuntu/long.ht/data/",
 	"covid_data_save_path":"./outputs/covid_output.txt",

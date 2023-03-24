@@ -16,7 +16,11 @@ from PIL import Image
 import time
 import argparse
 import json
-
+import wandb
+import flwr as fl
+from collections import OrderedDict
+import collections
+print("TORCH DEVICES: ",torch.cuda.device_count())
 
 class extractorRes50(nn.Module):
     def __init__(self, transfer_learning=True):
@@ -201,7 +205,11 @@ class complete_model_test(pl.LightningModule):
                 f.write('R-Precision: %s\n' % str(accuracies["r_precision"]))
                 f.write('Precision@1: %s\n' % accuracies["precision_at_1"])
 
+        print(metrics)
+        wandb.log(metrics)
+
         self.log_dict(metrics)
+        return metrics
 
 
 class covidDataset(data.Dataset):
@@ -228,6 +236,53 @@ class covidDataset(data.Dataset):
 
     def __len__(self):
         return self.num_samples
+
+class FedAvg(fl.server.strategy.FedAvg):
+    def __init__(self,
+        server_model,
+        test_set,
+        save_ckp_dir,
+        *args, **kwargs
+    ):
+        self.server_model = server_model
+        self.save_ckp_dir = save_ckp_dir
+        self.test_set = test_set
+        super().__init__(*args, **kwargs)
+        self.server_accuracy, self.convergence_round = 0.0, 1
+    def aggregate_fit(self,
+        server_round,
+        results, failures,
+    ):
+        # aggregated_metrics = metrics_aggregation_fn([(result.num_examples, result.metrics) for _, result in results])
+        
+        # wandb.log({"train_loss":aggregated_metrics["train_loss"], "val_loss":aggregated_metrics["val_loss"],  "validation_MAP@R_test":aggregated_metrics["validation_MAP@R_test"],
+        # "validation_r_precision":aggregated_metrics["validation_r_precision"],  "validation_precision_at_1":aggregated_metrics["validation_precision_at_1"], }, step = server_round)
+        aggregated_parameters, results = super().aggregate_fit(
+            server_round,
+            results, failures,
+        )
+        aggregated_parameters = fl.common.parameters_to_ndarrays(aggregated_parameters)
+        aggregated_keys = [key for key in self.server_model.state_dict().keys()]
+        self.server_model.load_state_dict(
+            collections.OrderedDict({key:torch.tensor(value) for key, value in zip(aggregated_keys, aggregated_parameters)}),
+            strict = False,
+        )
+        
+        reuslt = self.server_model.test_various_metrics(self.test_set)
+        
+        if reuslt["MAP@R_test"] > self.server_accuracy:
+            torch.save(
+                self.server_model,
+                "{}/server_checkpoint.pth".format(self.save_ckp_dir),
+            )
+            self.server_accuracy, self.convergence_round = reuslt["MAP@R_test"], server_round
+            mlogger = open("{}/server.txt".format(self.save_ckp_dir), "w")
+            mlogger.write("convergence_round:{}\n".format(self.convergence_round))
+
+        # wandb.log(results, step = server_round)
+        aggregated_parameters = [value.cpu().numpy() for key, value in self.server_model.state_dict().items()]
+        aggregated_parameters = fl.common.ndarrays_to_parameters(aggregated_parameters)
+        return aggregated_parameters, {}
       
 def main():
     # define an argument parser
@@ -241,6 +296,9 @@ def main():
     # read config
     with open(args.config_path + args.config, 'r') as config:
         config = config.read()
+    
+    wandb.login()
+    wandb.init(project="CXR-FL", entity="longht", name="Server")
 
     # parse config
     config = json.loads(config)
@@ -261,8 +319,29 @@ def main():
     model50 = complete_model_test(res50_extractor, network_head, loss_func=None, num_workers=num_workers)
 
     test_set = covidDataset(image_covid_root, csv_covid, size=[1024, 1024])
-    model50.model.load_state_dict(torch.load(dict_path))
-    model50.test_various_metrics(test_set, config["covid_data_save_path"])
+
+    save_ckp_dir = "./ckps"
+    strategy = FedAvg(
+        server_model = model50,
+        test_set = test_set,
+        save_ckp_dir=save_ckp_dir,
+        fraction_fit=1,
+        fraction_evaluate=1,
+        min_fit_clients=2,
+        min_available_clients=2
+    )
+
+    fl.server.start_server(
+        server_address="127.0.0.1:8080",
+        
+        config=fl.server.ServerConfig(num_rounds=50),
+        strategy=strategy,
+    )
+
+    torch.save(model50.model.state_dict(), dict_path)
+
+    # model50.model.load_state_dict(torch.load(dict_path))
+    # model50.test_various_metrics(test_set, config["covid_data_save_path"])
 
 
 if __name__ == '__main__':

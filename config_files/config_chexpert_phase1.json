@@ -27,9 +27,9 @@
 	"weight_decay" : 1e-5,
 	"learning_rate" :0.158489,
 	"cbm_size" : 128,
-	"batch_size" : 32,
+	"batch_size" : 16,
 	"num_epochs_phase1":30,
-	"num_epochs_phase2":50,
+	"num_epochs_phase2":70,
 	"extractor_frozen_phase1":true,
 	"extractor_frozen_phase2":false,
 	"checkpoint_path":null
