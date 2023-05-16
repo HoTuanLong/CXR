@@ -247,7 +247,7 @@ def main():
     # here, once again, the paths to the csv files and image folder have to be set, as well as to the model to be tested
     csv_covid = config["csv_covid_data"]
     image_covid_root = config["image_root_covid"]
-    dict_path = '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/server_checkpoint.pth'
+    dict_path = '/home/ubuntu/long.ht/CXR/ckps/chestxray_checkpoint_p1.pth'
     # again, the amount of workers used by the CPU
     num_workers = config["num_workers"]
 
@@ -262,6 +262,7 @@ def main():
 
     test_set = covidDataset(image_covid_root, csv_covid, size=[1024, 1024])
     model50.model.load_state_dict(torch.load(dict_path))
+    # model50 = torch.load(dict_path)
     model50.test_various_metrics(test_set, config["covid_data_save_path"])
 
 

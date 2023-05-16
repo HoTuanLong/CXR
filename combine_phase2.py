@@ -28,6 +28,9 @@ import torch.multiprocessing as mp
 
 
 print("TORCH DEVICES: ",torch.cuda.device_count())
+wandb.login()
+wandb.init(project="CXR-phase2-centralized", entity="longht", mode='offline')
+
 
 # the resNet50 class,  can be optionally pretrained
 class extractorRes50(nn.Module):
@@ -155,7 +158,7 @@ class complete_model(pl.LightningModule):
 
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.hparams.learning_rate,
                                                         # num_samples/batchsize = 61755/32
-                                                        total_steps=(int(140000 / 16) + 1) * self.hparams.expected_num_epochs + 1,
+                                                        total_steps=(int(176496 / 16) + 1) * self.hparams.expected_num_epochs + 1,
                                                         epochs=None,
                                                         # overall 61755 images / batchsize 32 = 2165 = number of steps in the scheduler
                                                         steps_per_epoch=None,
@@ -246,7 +249,7 @@ class complete_model(pl.LightningModule):
                    }
         if accuracies["precision_at_1"] > self.best_score:
             self.best_score = accuracies["precision_at_1"]
-            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/combine_checkpoint_phase2.pth')
+            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/CXR/ckps/combine_checkpoint_phase2.pth')
         
         self.log_dict(metrics)
         self.epoch_idx += 1
@@ -528,6 +531,7 @@ class loss_wrapper(torch.nn.Module):
 
 
 def main():
+    
     # define an argument parser
     parser = argparse.ArgumentParser('Patient Retrieval Phase2')
     parser.add_argument('--config_path', default='./config_files/', help='the path where the config files are stored')
@@ -536,9 +540,7 @@ def main():
     args = parser.parse_args()
     print('Arguments:\n' + '--config_path: ' + args.config_path + '\n--config: ' + args.config)
 
-    wandb.login()
-    wandb.init(project="CXR-phase2-centralized", entity="longht")
-
+    
     # read config
     with open(args.config_path + args.config, 'r') as config:
         config = config.read()
@@ -601,8 +603,8 @@ def main():
                              expected_num_epochs=expected_num_epochs, weight_decay=weight_decay,
                              validation_path_many=csv_val, root=image_root, validation_path_singles=csv_val_singles,
                              num_workers=num_workers)
+    # model50.model.load_state_dict(torch.load('/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/combine_checkpoint_phase2.pth'))
     model50.model.load_state_dict(torch.load(model_load_path))
-
     # if torch.cuda.device_count() > 1:
     #     model50 = nn.DataParallel(model50)
 
@@ -618,9 +620,8 @@ def main():
         precision=16,
         accumulate_grad_batches=1,
         deterministic=True,
-        gpus=1,
-        # accelerator='dp',
-        # auto_select_gpus=True
+        gpus=[0,1],
+        # accelerator="ddp"
     )
 
     data_module = MiningDataModule(
@@ -643,4 +644,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+        main()

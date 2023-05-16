@@ -10,3 +10,4 @@ client_log_1.txt
 client_log_2.txt
 chexpert_name.txt
 *.txt
+/config_files

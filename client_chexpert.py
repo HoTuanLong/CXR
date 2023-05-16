@@ -28,6 +28,8 @@ import torch.multiprocessing as mp
 
 
 print("TORCH DEVICES: ",torch.cuda.device_count())
+wandb.login()
+wandb.init(project="CXR-FL", entity="longht", name="CheXpert-client", mode='offline')
 
 # the resNet50 class,  can be optionally pretrained
 class extractorRes50(nn.Module):
@@ -91,6 +93,7 @@ class complete_model(pl.LightningModule):
                  validation_path_singles,
                  root,
                  best_score=0,
+                 results = {},
                  frozen_at_start=False,   # -> whether Extractor is frozen or not
                  learning_rate=1e-5,
                  batch_size=32,
@@ -118,6 +121,7 @@ class complete_model(pl.LightningModule):
         self.model = nn.Sequential(extractor, head)
         self.best_score = best_score
         self.epoch_idx=0
+        self.results = results
 
     def forward(self, x):
         x = self.model(x)
@@ -177,18 +181,18 @@ class complete_model(pl.LightningModule):
         loss = self.loss_func(embeddings, labels)
         mean_distance = torch.mean(self.distance.compute_mat(embeddings.type(torch.float), None))
         max_distance = torch.max(self.distance.compute_mat(embeddings.type(torch.float), None))
-        metrics = {'train_loss': loss,
-                   'mean_distance': mean_distance,
-                   'max_distance': max_distance}
+        metrics = {'train_loss': loss.item()}
         self.log_dict(metrics)
+        self.results.update(metrics)
         return loss
 
     def validation_step(self, batch, batch_idx):
         inputs, labels = batch
         embeddings = self(inputs)
         loss = self.loss_func(embeddings, labels)
-        metrics = {'val_loss': loss}
+        metrics = {'val_loss': loss.item()}
         self.log_dict(metrics)
+        self.results.update(metrics)
         return loss
 
     def validation_epoch_end(self, outs):
@@ -196,7 +200,7 @@ class complete_model(pl.LightningModule):
         # computed twice
         loss = torch.stack(outs).mean()
         print("average_val_loss: " + str(loss))
-        wandb.log({"Validation Loss": loss.item()}, step=self.epoch_idx)
+        wandb.log({"Validation Loss": loss.item()})
         self.test_various_metrics(self.test_set_val)
 
     def test_step(self, batch, batch_idx):
@@ -232,11 +236,11 @@ class complete_model(pl.LightningModule):
         t1 = time.time()
         print("Time used for evaluating: " + str((t1 - t0) / 60) + " minutes")
 
-        metrics = {"MAP@R_test": accuracies["mean_average_precision_at_r"],
-                   "r_precision": accuracies["r_precision"],
-                   "precision_at_1": accuracies["precision_at_1"],
-                   "mean__val_distance": mean_distance,
-                   "max_val_distance": max_distance
+        metrics = {"valid_MAP@R_test": accuracies["mean_average_precision_at_r"],
+                   "valid_r_precision": accuracies["r_precision"],
+                   "valid_precision_at_1": accuracies["precision_at_1"],
+                   "mean__val_distance": mean_distance.item(),
+                   "max_val_distance": max_distance.item()
                    }
 
         if save_path:
@@ -249,10 +253,11 @@ class complete_model(pl.LightningModule):
                 f.write('Precision@1: %s\n' % accuracies["precision_at_1"])
         if accuracies["precision_at_1"] > self.best_score:
             self.best_score = accuracies["precision_at_1"]
-            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/chestxpert_checkpoint_p2.pth')
+            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/CXR/ckps/client_chexpert_checkpoint_p2.pth')
 
         self.log_dict(metrics)
-        wandb.log(metrics, step=self.epoch_idx)
+        wandb.log(metrics)
+        self.results.update(metrics)
         self.epoch_idx += 1
 
 # a simple function that takes in id and name list, and takes out the necessary amount of samples
@@ -618,7 +623,7 @@ def train_FL():
         precision=16,
         accumulate_grad_batches=1,
         deterministic=True,
-        gpus=1,
+        gpus=[0],
     )
 
     data_module = MiningDataModule(
@@ -651,14 +656,13 @@ class FlowerClient(fl.client.NumPyClient):
         t2 = time.time()
         print("Time used for fitting the model: " + str((t2-t1)/3600) + " hours")
         # torch.save(model50.model.state_dict(), model_save_path)
-        return self.get_parameters(config={}), 55000, {}
+        return self.get_parameters(config={}), 110741, model50.results
 
 def main() -> None:
     # Model and data
     # model = mnist.LitAutoEncoder()
     # train_loader, val_loader, test_loader = mnist.load_data()
-    wandb.login()
-    wandb.init(project="CXR-FL", entity="longht", name="CheXpert-client")
+
     # Flower client
     client = FlowerClient()
     fl.client.start_numpy_client(server_address="127.0.0.1:8080", client=client)

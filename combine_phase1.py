@@ -245,7 +245,7 @@ class complete_model(pl.LightningModule):
                 f.write('Precision@1: %s\n' % accuracies["precision_at_1"])
         if accuracies["precision_at_1"] > self.best_score:
             self.best_score = accuracies["precision_at_1"]
-            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/combine_p1.pth')
+            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/CXR/ckps/combine_p1.pth')
 
         self.log_dict(metrics)
         wandb.log(metrics, step=self.epoch_idx)

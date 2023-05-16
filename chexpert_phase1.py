@@ -23,7 +23,8 @@ import wandb
 from statistics import mean
 
 
-
+# wandb.login(mode='disabled')
+# wandb.init(project="CXR-phase1-centralized", entity="longht", name="CheXpert")
 
 # the resNet50 class,  can be optionally pretrained
 class extractorRes50(nn.Module):
@@ -192,7 +193,7 @@ class complete_model(pl.LightningModule):
         # computed twice
         loss = torch.stack(outs).mean()
         print("average_val_loss: " + str(loss))
-        wandb.log({"Validation Loss": loss.item()}, step=self.epoch_idx)
+        # wandb.log({"Validation Loss": loss.item()}, step=self.epoch_idx)
         self.test_various_metrics(self.test_set_val)
 
     def test_step(self, batch, batch_idx):
@@ -245,10 +246,10 @@ class complete_model(pl.LightningModule):
                 f.write('Precision@1: %s\n' % accuracies["precision_at_1"])
         if accuracies["precision_at_1"] > self.best_score:
             self.best_score = accuracies["precision_at_1"]
-            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/chexpert_checkpoint_p1.pth')
+            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/CXR/ckps/chexpert_checkpoint_p1.pth')
 
         self.log_dict(metrics)
-        wandb.log(metrics, step=self.epoch_idx)
+        # wandb.log(metrics, step=self.epoch_idx)
         self.epoch_idx += 1
 
 
@@ -527,8 +528,7 @@ class loss_wrapper(torch.nn.Module):
 
 def main():
     # define an argument parser
-    wandb.login()
-    wandb.init(project="CXR-phase1-centralized", entity="longht")
+
     parser = argparse.ArgumentParser('Patient Retrieval Phase1')
     parser.add_argument('--config_path', default='./config_files/', help='the path where the config files are stored')
     parser.add_argument('--config', default='config.json',
@@ -609,7 +609,7 @@ def main():
         precision=16,
         accumulate_grad_batches=1,
         deterministic=True,
-        gpus=1
+        gpus=[0,1]
     )
 
     data_module = MiningDataModule(

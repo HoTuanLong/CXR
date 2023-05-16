@@ -260,7 +260,7 @@ class complete_model(pl.LightningModule):
 
         if accuracies["precision_at_1"] > self.best_score:
             self.best_score = accuracies["precision_at_1"]
-            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/server_checkpoint.pth')
+            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/cxr-patient-reidentification/ckps/server_checkpoint_final.pth')
  
         
         self.log_dict(metrics)
@@ -550,7 +550,7 @@ class loss_wrapper(torch.nn.Module):
 
 def train_FL():
     wandb.login()
-    wandb.init(project="CXR-Patient-ReID", entity="longht")
+    wandb.init(project="CXR-FL", entity="longht", name="Server")
     # define an argument parser
     parser = argparse.ArgumentParser('Patient Retrieval Phase2')
     parser.add_argument('--config_path', default='./config_files/', help='the path where the config files are stored')
@@ -652,14 +652,15 @@ def train_FL():
     return trainer50, model50, data_module, model_save_path
 
 def metrics_aggregation_fn(results):
-    train_loss, val_loss,  = [result["train_loss"]*num_examples for num_examples, result in results], [result["val_loss"]*num_examples for num_examples, result in results], 
-    validation_MAPR_test, validation_r_precision, validation_precision_at_1, = [result["validation_MAP@R_test"]*num_examples for num_examples, result in results], [result["validation_r_precision"]*num_examples for num_examples, result in results], [result["validation_precision_at_1"]*num_examples for num_examples, result in results],
+    print("results:", results)
+    train_loss, val_loss,  = [result["train_loss"] for num_examples, result in results], [result["val_loss"] for num_examples, result in results],  
+    validation_MAPR_test, validation_r_precision, validation_precision_at_1, = [result["valid_MAP@R_test"] for num_examples, result in results], [result["valid_r_precision"] for num_examples, result in results], [result["valid_precision_at_1"] for num_examples, result in results],
 
-    sum_examples = sum([num_examples for num_examples, result in results])
+    print("results:", results)
     aggregated_metrics = {
-        "train_loss":sum(train_loss)/sum_examples, "val_loss":sum(val_loss)/sum_examples, 
-        "validation_MAP@R_test":sum(validation_MAPR_test)/sum_examples, "validation_r_precision":sum(validation_r_precision)/sum_examples, 
-        "validation_precision_at_1":sum(validation_precision_at_1)/sum_examples, 
+        "train_loss":sum(train_loss)/len(train_loss), "val_loss":sum(val_loss)/len(val_loss), 
+        "valid_MAP@R_test":sum(validation_MAPR_test)/len(validation_MAPR_test), "valid_r_precision":sum(validation_r_precision)/len(validation_r_precision), 
+        "valid_precision_at_1":sum(validation_precision_at_1)/len(validation_precision_at_1), 
     }
     print("aggregated metrics:", aggregated_metrics)
 
@@ -686,8 +687,8 @@ class FedAvg(fl.server.strategy.FedAvg):
     ):
         aggregated_metrics = metrics_aggregation_fn([(result.num_examples, result.metrics) for _, result in results])
         
-        wandb.log({"train_loss":aggregated_metrics["train_loss"], "val_loss":aggregated_metrics["val_loss"],  "validation_MAP@R_test":aggregated_metrics["validation_MAP@R_test"],
-        "validation_r_precision":aggregated_metrics["validation_r_precision"],  "validation_precision_at_1":aggregated_metrics["validation_precision_at_1"], }, step = server_round)
+        wandb.log({"avg_train_loss":aggregated_metrics["train_loss"], "avg_val_loss":aggregated_metrics["val_loss"],  "avg_MAP@R_test":aggregated_metrics["valid_MAP@R_test"],
+        "avg_r_precision":aggregated_metrics["valid_r_precision"],  "avg_precision_at_1":aggregated_metrics["valid_precision_at_1"], }, step = server_round)
 
         aggregated_parameters, results = super().aggregate_fit(
             server_round, 
@@ -701,17 +702,16 @@ class FedAvg(fl.server.strategy.FedAvg):
             strict = False, 
         )
 
-        print("result: ", results)
-        if aggregated_metrics["validation_MAP@R_test"] > self.server_accuracy:
+        if aggregated_metrics["valid_MAP@R_test"] > self.server_accuracy:
             torch.save(
                 self.server_model, 
-                "{}/server.ptl".format(self.save_ckp_dir), 
+                "{}/server_checkpoint_final.pth".format(self.save_ckp_dir), 
             )
-            self.server_accuracy, self.convergence_round = aggregated_metrics["validation_MAP@R_test"], server_round
-            mlogger = open("{}/server.txt".format(self.save_ckp_dir), "w")
-            mlogger.write("convergence_round:{}\n".format(self.convergence_round))
+            self.server_accuracy, self.convergence_round = aggregated_metrics["valid_MAP@R_test"], server_round
+            # mlogger = open("{}/server.txt".format(self.save_ckp_dir), "w")
+            # mlogger.write("convergence_round:{}\n".format(self.convergence_round))
 
-        results = trainer50.test(model50, test_data)
+        # results = trainer50.test(model50, test_data)
         # wandb.log(results, step = server_round)
 
         aggregated_parameters = [value.cpu().numpy() for key, value in self.server_model.state_dict().items()]
@@ -720,8 +720,8 @@ class FedAvg(fl.server.strategy.FedAvg):
         return aggregated_parameters, {}
 
 def main() -> None:
-    wandb.login()
-    wandb.init(project="CXR-Patient-ReID", entity="longht", name="Server")
+    # wandb.login()
+    # wandb.init(project="CXR-FL", entity="longht", name="Server")
     # Define strategy
     # strategy = fl.server.strategy.FedAvg(
     #     min_available_clients = args.num_clients, min_fit_clients = args.num_clients, 
