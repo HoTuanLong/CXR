@@ -249,7 +249,7 @@ class complete_model(pl.LightningModule):
                    }
         if accuracies["precision_at_1"] > self.best_score:
             self.best_score = accuracies["precision_at_1"]
-            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/CXR/ckps/combine_checkpoint_phase2.pth')
+            torch.save(self.model.state_dict(), '/home/ubuntu/long.ht/CXR/ckps/combine_p2.pth')
         
         self.log_dict(metrics)
         self.epoch_idx += 1
@@ -620,7 +620,7 @@ def main():
         precision=16,
         accumulate_grad_batches=1,
         deterministic=True,
-        gpus=[0,1],
+        gpus=[0],
         # accelerator="ddp"
     )
 

@@ -247,7 +247,7 @@ def main():
     # here, once again, the paths to the csv files and image folder have to be set, as well as to the model to be tested
     csv_covid = config["csv_covid_data"]
     image_covid_root = config["image_root_covid"]
-    dict_path = '/home/ubuntu/long.ht/CXR/ckps/chestxray_checkpoint_p1.pth'
+    dict_path = '/home/ubuntu/long.ht/cxr-pytorch/ckps/CXR/phase1_checkpoint.pth'
     # again, the amount of workers used by the CPU
     num_workers = config["num_workers"]
 
